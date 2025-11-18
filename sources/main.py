@@ -34,9 +34,16 @@ async def get_waka_time_stats(repositories: Dict, commit_dates: Dict) -> str:
     if data is None:
         DBM.p("WakaTime data unavailable!")
         return stats
-    if EM.SHOW_COMMIT or EM.SHOW_DAYS_OF_WEEK:  # if any on flag is turned on then we need to calculate the data and print accordingly
+
+    # Be robust to different Wakapi/WakaTime payloads
+    payload = (data.get("data") or {}) if isinstance(data, dict) else {}
+    # timezone can be in data.timezone or data.range.timezone; default to UTC if missing
+    timezone = payload.get("timezone") or (payload.get("range") or {}).get("timezone") or "UTC"
+
+    # if any on flag is turned on then we need to calculate the data and print accordingly
+    if EM.SHOW_COMMIT or EM.SHOW_DAYS_OF_WEEK:
         DBM.i("Adding user commit day time info...")
-        stats += f"{await make_commit_day_time_list(data['data']['timezone'], repositories, commit_dates)}\n\n"
+        stats += f"{await make_commit_day_time_list(timezone, repositories, commit_dates)}\n\n"
 
     if EM.SHOW_TIMEZONE or EM.SHOW_LANGUAGE or EM.SHOW_EDITORS or EM.SHOW_PROJECTS or EM.SHOW_OS:
         no_activity = FM.t("No Activity Tracked This Week")
@@ -44,27 +51,30 @@ async def get_waka_time_stats(repositories: Dict, commit_dates: Dict) -> str:
 
         if EM.SHOW_TIMEZONE:
             DBM.i("Adding user timezone info...")
-            time_zone = data["data"]["timezone"]
-            stats += f"🕑︎ {FM.t('Timezone')}: {time_zone}\n\n"
+            stats += f"🕑︎ {FM.t('Timezone')}: {timezone}\n\n"
 
         if EM.SHOW_LANGUAGE:
             DBM.i("Adding user top languages info...")
-            lang_list = no_activity if len(data["data"]["languages"]) == 0 else make_list(data["data"]["languages"])
+            languages = payload.get("languages") or []
+            lang_list = no_activity if len(languages) == 0 else make_list(languages)
             stats += f"💬 {FM.t('Languages')}: \n{lang_list}\n\n"
 
         if EM.SHOW_EDITORS:
             DBM.i("Adding user editors info...")
-            edit_list = no_activity if len(data["data"]["editors"]) == 0 else make_list(data["data"]["editors"])
+            editors = payload.get("editors") or []
+            edit_list = no_activity if len(editors) == 0 else make_list(editors)
             stats += f"🔥 {FM.t('Editors')}: \n{edit_list}\n\n"
 
         if EM.SHOW_PROJECTS:
             DBM.i("Adding user projects info...")
-            project_list = no_activity if len(data["data"]["projects"]) == 0 else make_list(data["data"]["projects"])
+            projects = payload.get("projects") or []
+            project_list = no_activity if len(projects) == 0 else make_list(projects)
             stats += f"🐱‍💻 {FM.t('Projects')}: \n{project_list}\n\n"
 
         if EM.SHOW_OS:
             DBM.i("Adding user operating systems info...")
-            os_list = no_activity if len(data["data"]["operating_systems"]) == 0 else make_list(data["data"]["operating_systems"])
+            oss = payload.get("operating_systems") or []
+            os_list = no_activity if len(oss) == 0 else make_list(oss)
             stats += f"💻 {FM.t('operating system')}: \n{os_list}\n\n"
 
         stats = f"{stats[:-1]}```\n\n"
@@ -171,7 +181,9 @@ async def get_stats() -> str:
         if data is None:
             DBM.p("WakaTime data unavailable!")
         else:
-            stats += f"![Code Time](http://img.shields.io/badge/{quote('Code Time')}-{quote(str(data['data']['text']))}-blue)\n\n"
+            payload_all = (data.get("data") or {}) if isinstance(data, dict) else {}
+            code_time_text = str(payload_all.get("text") or "0 hrs")
+            stats += f"![Code Time](http://img.shields.io/badge/{quote('Code Time')}-{quote(code_time_text)}-blue)\n\n"
 
     if EM.SHOW_PROFILE_VIEWS:
         DBM.i("Adding profile views info...")
@@ -215,13 +227,16 @@ async def main():
     init_localization_manager()
     DBM.i("Managers initialized.")
 
-    stats = await get_stats()
-    if not EM.DEBUG_RUN:
-        GHM.update_readme(stats)
-        GHM.commit_update()
-    else:
-        GHM.set_github_output(stats)
-    await DM.close_remote_resources()
+    try:
+        stats = await get_stats()
+        if not EM.DEBUG_RUN:
+            GHM.update_readme(stats)
+            GHM.commit_update()
+        else:
+            GHM.set_github_output(stats)
+    finally:
+        # Ensure resources are always awaited/closed to avoid "coroutine was never awaited" warnings on exceptions
+        await DM.close_remote_resources()
 
 
 if __name__ == "__main__":
