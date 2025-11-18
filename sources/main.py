@@ -19,14 +19,6 @@ from graphics_list_formatter import make_list, make_commit_day_time_list, make_l
 
 
 async def get_waka_time_stats(repositories: Dict, commit_dates: Dict) -> str:
-    """
-    Collects user info from wakatime.
-    Info includes most common commit time, timezone, language, editors, projects and OSs.
-
-    :param repositories: User repositories list.
-    :param commit_dates: User commit data list.
-    :returns: String representation of the info.
-    """
     DBM.i("Adding short WakaTime stats...")
     stats = str()
 
@@ -35,12 +27,19 @@ async def get_waka_time_stats(repositories: Dict, commit_dates: Dict) -> str:
         DBM.p("WakaTime data unavailable!")
         return stats
 
-    # Be robust to different Wakapi/WakaTime payloads
-    payload = (data.get("data") or {}) if isinstance(data, dict) else {}
-    # timezone can be in data.timezone or data.range.timezone; default to UTC if missing
-    timezone = payload.get("timezone") or (payload.get("range") or {}).get("timezone") or "UTC"
+    # 确保 payload 为 dict
+    raw_payload = data.get("data") if isinstance(data, dict) else None
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
 
-    # if any on flag is turned on then we need to calculate the data and print accordingly
+    # 兼容多种位置的时区；range 可能是字符串，只有为 dict 才读取 timezone
+    timezone = payload.get("timezone")
+    if not timezone:
+        rng_val = payload.get("range")
+        if isinstance(rng_val, dict):
+            timezone = rng_val.get("timezone")
+    if not timezone:
+        timezone = "UTC"
+
     if EM.SHOW_COMMIT or EM.SHOW_DAYS_OF_WEEK:
         DBM.i("Adding user commit day time info...")
         stats += f"{await make_commit_day_time_list(timezone, repositories, commit_dates)}\n\n"
@@ -84,12 +83,6 @@ async def get_waka_time_stats(repositories: Dict, commit_dates: Dict) -> str:
 
 
 async def get_short_github_info() -> str:
-    """
-    Collects user info from GitHub public profile.
-    The stats include: disk usage, contributions number, whether the user has opted to hire, public and private repositories number.
-
-    :returns: String representation of the info.
-    """
     DBM.i("Adding short GitHub info...")
     stats = f"**🐱 {FM.t('My GitHub Data')}** \n\n"
 
@@ -139,18 +132,12 @@ async def get_short_github_info() -> str:
 
 
 async def collect_user_repositories() -> Dict:
-    """
-    Collects information about all the user repositories available.
-
-    :returns: Complete list of user repositories.
-    """
     DBM.i("Getting user repositories list...")
     repositories = await DM.get_remote_graphql("user_repository_list", username=GHM.USER.login, id=GHM.USER.node_id)
     repo_names = [repo["name"] for repo in repositories]
     DBM.g("\tUser repository list collected!")
 
     contributed = await DM.get_remote_graphql("repos_contributed_to", username=GHM.USER.login)
-
     contributed_nodes = [repo for repo in contributed if repo is not None and repo["name"] not in repo_names and not repo["isFork"]]
     DBM.g("\tUser contributed to repository list collected!")
 
@@ -158,18 +145,12 @@ async def collect_user_repositories() -> Dict:
 
 
 async def get_stats() -> str:
-    """
-    Creates new README.md content from all the acquired statistics from all places.
-    The readme includes data from wakatime, contributed lines of code number, GitHub profile info and last updated date.
-
-    :returns: String representation of README.md contents.
-    """
     DBM.i("Collecting stats for README...")
 
     stats = str()
     repositories = await collect_user_repositories()
 
-    if EM.SHOW_LINES_OF_CODE or EM.SHOW_LOC_CHART or EM.SHOW_COMMIT or EM.SHOW_DAYS_OF_WEEK:  # calculate commit data if any one of these is enabled
+    if EM.SHOW_LINES_OF_CODE or EM.SHOW_LOC_CHART or EM.SHOW_COMMIT or EM.SHOW_DAYS_OF_WEEK:
         yearly_data, commit_data = await calculate_commit_data(repositories)
     else:
         yearly_data, commit_data = dict(), dict()
@@ -181,7 +162,8 @@ async def get_stats() -> str:
         if data is None:
             DBM.p("WakaTime data unavailable!")
         else:
-            payload_all = (data.get("data") or {}) if isinstance(data, dict) else {}
+            raw_all = data.get("data") if isinstance(data, dict) else None
+            payload_all = raw_all if isinstance(raw_all, dict) else {}
             code_time_text = str(payload_all.get("text") or "0 hrs")
             stats += f"![Code Time](http://img.shields.io/badge/{quote('Code Time')}-{quote(code_time_text)}-blue)\n\n"
 
@@ -218,10 +200,6 @@ async def get_stats() -> str:
 
 
 async def main():
-    """
-    Application main function.
-    Initializes all managers, collects user info and updates README.md if necessary.
-    """
     init_github_manager()
     await init_download_manager(GHM.USER.login)
     init_localization_manager()
@@ -235,7 +213,7 @@ async def main():
         else:
             GHM.set_github_output(stats)
     finally:
-        # Ensure resources are always awaited/closed to avoid "coroutine was never awaited" warnings on exceptions
+        # 出现异常也确保关闭资源，避免 "coroutine was never awaited" 警告
         await DM.close_remote_resources()
 
 
