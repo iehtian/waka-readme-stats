@@ -38,7 +38,7 @@ async def get_waka_time_stats(repositories: Dict, commit_dates: Dict) -> str:
         if isinstance(rng_val, dict):
             timezone = rng_val.get("timezone")
     if not timezone:
-        timezone = "UTC"
+        timezone = "Asia/Shanghai"
 
     if EM.SHOW_COMMIT or EM.SHOW_DAYS_OF_WEEK:
         DBM.i("Adding user commit day time info...")
@@ -193,7 +193,7 @@ async def get_stats() -> str:
 
     if EM.SHOW_UPDATED_DATE:
         DBM.i("Adding last updated time...")
-        stats += f"\n Last Updated on {datetime.now().strftime(EM.UPDATED_DATE_FORMAT)} UTC"
+        stats += f"\n Last Updated on {datetime.now().strftime(EM.UPDATED_DATE_FORMAT)} Asia/Shanghai"
 
     DBM.g("Stats for README collected!")
     return stats
