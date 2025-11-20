@@ -83,8 +83,8 @@ async def init_download_manager(user_login: str):
     await DownloadManager.load_remote_resources(
         linguist="https://cdn.jsdelivr.net/gh/github/linguist@master/lib/linguist/languages.yml",
         # 统一使用兼容端点，保证结构与 WakaTime v1 一致性更好
-        waka_latest=f"http://wakapi.陈莹.我爱你/api/compat/wakatime/v1/users/current/stats/last_7_days?api_key={EM.WAKATIME_API_KEY}",
-        waka_all=f"http://wakapi.陈莹.我爱你/api/compat/wakatime/v1/users/current/all_time_since_today?api_key={EM.WAKATIME_API_KEY}",
+        waka_latest=f"https://wakapi.陈莹.我爱你/api/compat/wakatime/v1/users/current/stats/last_7_days?api_key={EM.WAKATIME_API_KEY}",
+        waka_all=f"https://wakapi.陈莹.我爱你/api/compat/wakatime/v1/users/current/all_time_since_today?api_key={EM.WAKATIME_API_KEY}",
         github_stats=f"https://github-contributions.vercel.app/api/v1/{user_login}",
     )
 
