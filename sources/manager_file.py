@@ -42,7 +42,8 @@ class FileManager:
         :param key: Localization key.
         :returns: Translation string.
         """
-        return FileManager._LOCALIZATION[key]
+        # 使用 .get 提供回退，避免新增功能的键未添加导致 KeyError 中断运行
+        return FileManager._LOCALIZATION.get(key, key)
 
     @staticmethod
     def write_file(name: str, content: str, append: bool = False, assets: bool = False):
@@ -59,7 +60,9 @@ class FileManager:
             file.write(content)
 
     @staticmethod
-    def cache_binary(name: str, content: Optional[Any] = None, assets: bool = False) -> Optional[Any]:
+    def cache_binary(
+        name: str, content: Optional[Any] = None, assets: bool = False
+    ) -> Optional[Any]:
         """
         Save binary output file if provided or read if content is None.
 
