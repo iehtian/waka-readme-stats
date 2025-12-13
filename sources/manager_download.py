@@ -1,4 +1,4 @@
-from asyncio import Task
+from asyncio import Task, create_task
 from hashlib import md5
 from json import dumps
 from string import Template
@@ -96,34 +96,77 @@ class DownloadManager:
 
     @staticmethod
     async def load_remote_resources(**resources: str):
+        """
+        Start background GET requests and store Tasks in the cache.
+        Using create_task avoids storing raw coroutine objects that cannot be
+        re-awaited and also prevents 'coroutine was never awaited' warnings.
+        """
         for resource, url in resources.items():
-            DownloadManager._REMOTE_RESOURCES_CACHE[resource] = DownloadManager._client.get(url)
+            # create_task wraps the coroutine in a Task that can be awaited multiple times
+            DownloadManager._REMOTE_RESOURCES_CACHE[resource] = create_task(
+                DownloadManager._client.get(url)
+            )
 
     @staticmethod
     async def close_remote_resources():
-        for resource in DownloadManager._REMOTE_RESOURCES_CACHE.values():
-            if isinstance(resource, Task):
-                resource.cancel()
-            elif isinstance(resource, Awaitable):
-                await resource
+        """
+        Cancel and await all running Tasks/Awaitables in the cache.
+        Be defensive: a Task may have already completed with an exception.
+        We catch and ignore exceptions here to avoid failing shutdown.
+        """
+        for resource in list(DownloadManager._REMOTE_RESOURCES_CACHE.values()):
+            try:
+                if isinstance(resource, Task):
+                    # Cancel if still pending
+                    if not resource.done():
+                        resource.cancel()
+                    try:
+                        await resource
+                    except Exception:
+                        # swallow exceptions during shutdown (network errors, cancels, etc.)
+                        pass
+                elif isinstance(resource, Awaitable):
+                    try:
+                        await resource
+                    except Exception:
+                        pass
+            except Exception:
+                # extra defensive guard: shouldn't normally happen
+                pass
 
     @staticmethod
-    async def _get_remote_resource(resource: str, convertor: Optional[Callable[[bytes], Dict]]) -> Dict or None:
+    async def _get_remote_resource(
+        resource: str, convertor: Optional[Callable[[bytes], Dict]]
+    ) -> Dict or None:
         DBM.i(f"\tMaking a remote API query named '{resource}'...")
-        if isinstance(DownloadManager._REMOTE_RESOURCES_CACHE[resource], Awaitable):
-            res = await DownloadManager._REMOTE_RESOURCES_CACHE[resource]
-            DownloadManager._REMOTE_RESOURCES_CACHE[resource] = res
-            DBM.g(f"\tQuery '{resource}' finished, result saved!")
+        cached = DownloadManager._REMOTE_RESOURCES_CACHE[resource]
+        # If the cache entry is an awaitable (Task), await it and then replace cache with the Response
+        if isinstance(cached, Awaitable):
+            try:
+                res = await cached
+                # replace the Task/Awaitable in cache with the resolved Response
+                DownloadManager._REMOTE_RESOURCES_CACHE[resource] = res
+                DBM.g(f"\tQuery '{resource}' finished, result saved!")
+            except Exception as e:
+                # Network/connect errors may happen; log and re-raise so caller can decide.
+                DBM.w(f"\tQuery '{resource}' failed while awaiting remote request: {e}")
+                raise
+
         else:
-            res = DownloadManager._REMOTE_RESOURCES_CACHE[resource]
+            # cached is already a response-like object
+            res = cached
             DBM.g(f"\tQuery '{resource}' loaded from cache!")
+
         if res.status_code == 200:
             return res.json() if convertor is None else convertor(res.content)
         elif res.status_code in (201, 202):
             DBM.w(f"\tQuery '{resource}' returned {res.status_code} status code")
             return None
         else:
-            raise Exception(f"Query '{res.url}' failed to run by returning code of {res.status_code}: {res.json()}")
+            # Keep behaviour consistent: surface the response body for debugging
+            raise Exception(
+                f"Query '{res.url}' failed to run by returning code of {res.status_code}: {res.json()}"
+            )
 
     @staticmethod
     async def get_remote_json(resource: str) -> Dict or None:
@@ -134,7 +177,9 @@ class DownloadManager:
         return await DownloadManager._get_remote_resource(resource, safe_load)
 
     @staticmethod
-    async def _fetch_graphql_query(query: str, retries_count: int = 10, **kwargs) -> Dict:
+    async def _fetch_graphql_query(
+        query: str, retries_count: int = 10, **kwargs
+    ) -> Dict:
         headers = {"Authorization": f"Bearer {EM.GH_TOKEN}"}
         res = await DownloadManager._client.post(
             "https://api.github.com/graphql",
@@ -144,9 +189,13 @@ class DownloadManager:
         if res.status_code == 200:
             return res.json()
         elif res.status_code == 502 and retries_count > 0:
-            return await DownloadManager._fetch_graphql_query(query, retries_count - 1, **kwargs)
+            return await DownloadManager._fetch_graphql_query(
+                query, retries_count - 1, **kwargs
+            )
         else:
-            raise Exception(f"Query '{query}' failed to run by returning code of {res.status_code}: {res.json()}")
+            raise Exception(
+                f"Query '{query}' failed to run by returning code of {res.status_code}: {res.json()}"
+            )
 
     @staticmethod
     def _find_pagination_and_data_list(response: Dict) -> Tuple[List, Dict]:
@@ -185,12 +234,20 @@ class DownloadManager:
 
     @staticmethod
     async def _fetch_graphql_paginated(query: str, **kwargs) -> Dict:
-        initial_query_response = await DownloadManager._fetch_graphql_query(query, **kwargs, pagination="first: 100")
-        page_list, page_info = DownloadManager._find_pagination_and_data_list(initial_query_response)
+        initial_query_response = await DownloadManager._fetch_graphql_query(
+            query, **kwargs, pagination="first: 100"
+        )
+        page_list, page_info = DownloadManager._find_pagination_and_data_list(
+            initial_query_response
+        )
         while page_info["hasNextPage"]:
             pagination = f'first: 100, after: "{page_info["endCursor"]}"'
-            query_response = await DownloadManager._fetch_graphql_query(query, **kwargs, pagination=pagination)
-            new_page_list, page_info = DownloadManager._find_pagination_and_data_list(query_response)
+            query_response = await DownloadManager._fetch_graphql_query(
+                query, **kwargs, pagination=pagination
+            )
+            new_page_list, page_info = DownloadManager._find_pagination_and_data_list(
+                query_response
+            )
             page_list += new_page_list
         return page_list
 
