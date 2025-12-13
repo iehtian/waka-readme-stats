@@ -97,9 +97,7 @@ class DownloadManager:
     @staticmethod
     async def load_remote_resources(**resources: str):
         for resource, url in resources.items():
-            DownloadManager._REMOTE_RESOURCES_CACHE[resource] = (
-                DownloadManager._client.get(url)
-            )
+            DownloadManager._REMOTE_RESOURCES_CACHE[resource] = DownloadManager._client.get(url)
 
     @staticmethod
     async def close_remote_resources():
@@ -110,9 +108,7 @@ class DownloadManager:
                 await resource
 
     @staticmethod
-    async def _get_remote_resource(
-        resource: str, convertor: Optional[Callable[[bytes], Dict]]
-    ) -> Dict or None:
+    async def _get_remote_resource(resource: str, convertor: Optional[Callable[[bytes], Dict]]) -> Dict or None:
         DBM.i(f"\tMaking a remote API query named '{resource}'...")
         if isinstance(DownloadManager._REMOTE_RESOURCES_CACHE[resource], Awaitable):
             res = await DownloadManager._REMOTE_RESOURCES_CACHE[resource]
@@ -127,9 +123,7 @@ class DownloadManager:
             DBM.w(f"\tQuery '{resource}' returned {res.status_code} status code")
             return None
         else:
-            raise Exception(
-                f"Query '{res.url}' failed to run by returning code of {res.status_code}: {res.json()}"
-            )
+            raise Exception(f"Query '{res.url}' failed to run by returning code of {res.status_code}: {res.json()}")
 
     @staticmethod
     async def get_remote_json(resource: str) -> Dict or None:
@@ -140,9 +134,7 @@ class DownloadManager:
         return await DownloadManager._get_remote_resource(resource, safe_load)
 
     @staticmethod
-    async def _fetch_graphql_query(
-        query: str, retries_count: int = 10, **kwargs
-    ) -> Dict:
+    async def _fetch_graphql_query(query: str, retries_count: int = 10, **kwargs) -> Dict:
         headers = {"Authorization": f"Bearer {EM.GH_TOKEN}"}
         res = await DownloadManager._client.post(
             "https://api.github.com/graphql",
@@ -152,43 +144,53 @@ class DownloadManager:
         if res.status_code == 200:
             return res.json()
         elif res.status_code == 502 and retries_count > 0:
-            return await DownloadManager._fetch_graphql_query(
-                query, retries_count - 1, **kwargs
-            )
+            return await DownloadManager._fetch_graphql_query(query, retries_count - 1, **kwargs)
         else:
-            raise Exception(
-                f"Query '{query}' failed to run by returning code of {res.status_code}: {res.json()}"
-            )
+            raise Exception(f"Query '{query}' failed to run by returning code of {res.status_code}: {res.json()}")
 
     @staticmethod
     def _find_pagination_and_data_list(response: Dict) -> Tuple[List, Dict]:
-        if "nodes" in response.keys() and "pageInfo" in response.keys():
-            return response["nodes"], response["pageInfo"]
-        elif len(response) == 1 and isinstance(
-            response[list(response.keys())[0]], Dict
-        ):
-            return DownloadManager._find_pagination_and_data_list(
-                response[list(response.keys())[0]]
-            )
-        else:
+        """
+        Traverse a nested GraphQL response dict and find the first dict that
+        contains both 'nodes' and 'pageInfo'. Return (nodes, pageInfo).
+        If not found, return ([], {'hasNextPage': False}).
+
+        This is more robust than assuming intermediate dicts have only one key,
+        because some nodes (e.g. 'target') may contain multiple keys like
+        '__typename' and 'history'.
+        """
+        if not isinstance(response, dict):
             return list(), dict(hasNextPage=False)
+
+        # Direct hit
+        if "nodes" in response and "pageInfo" in response:
+            return response["nodes"], response["pageInfo"]
+
+        # Recurse into dictionary values
+        for value in response.values():
+            if isinstance(value, dict):
+                nodes, page_info = DownloadManager._find_pagination_and_data_list(value)
+                if nodes or page_info.get("hasNextPage", False):
+                    return nodes, page_info
+            elif isinstance(value, list):
+                # Some GraphQL responses might embed lists; check each element
+                for item in value:
+                    if isinstance(item, dict):
+                        nodes, page_info = DownloadManager._find_pagination_and_data_list(item)
+                        if nodes or page_info.get("hasNextPage", False):
+                            return nodes, page_info
+
+        # Fallback: not found
+        return list(), dict(hasNextPage=False)
 
     @staticmethod
     async def _fetch_graphql_paginated(query: str, **kwargs) -> Dict:
-        initial_query_response = await DownloadManager._fetch_graphql_query(
-            query, **kwargs, pagination="first: 100"
-        )
-        page_list, page_info = DownloadManager._find_pagination_and_data_list(
-            initial_query_response
-        )
+        initial_query_response = await DownloadManager._fetch_graphql_query(query, **kwargs, pagination="first: 100")
+        page_list, page_info = DownloadManager._find_pagination_and_data_list(initial_query_response)
         while page_info["hasNextPage"]:
             pagination = f'first: 100, after: "{page_info["endCursor"]}"'
-            query_response = await DownloadManager._fetch_graphql_query(
-                query, **kwargs, pagination=pagination
-            )
-            new_page_list, page_info = DownloadManager._find_pagination_and_data_list(
-                query_response
-            )
+            query_response = await DownloadManager._fetch_graphql_query(query, **kwargs, pagination=pagination)
+            new_page_list, page_info = DownloadManager._find_pagination_and_data_list(query_response)
             page_list += new_page_list
         return page_list
 
